@@ -31,6 +31,10 @@ class InclinometerData extends ChangeNotifier {
   List<double> calibrationReadingsZ = [];
   bool isCalibrating = false;
   bool isMetric = true;
+  // Heading offset recorded during a "North" calibration.
+  // When set, all computed headings will subtract this baseline so
+  // the displayed heading is relative to the calibrated forward direction.
+  double headingOffset = 0.0;
 
   void updateData(VoidCallback updater) {
     updater();

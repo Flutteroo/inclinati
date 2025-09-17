@@ -9,6 +9,9 @@ import 'inclinometer_data.dart';
 
 class SensorService {
   final InclinometerData _data;
+  // buffer for recent heading values (degrees) to compute a circular mean
+  final List<double> _headingBuffer = [];
+  final int _headingBufferSize = 10;
 
   SensorService(this._data) {
     _initialize();
@@ -35,11 +38,15 @@ class SensorService {
   void _initializeSensors() {
     accelerometerEventStream().listen((AccelerometerEvent event) {
       _data.updateData(() {
-        _data.rawPitch = atan2(event.y, event.z) * 180 / pi;
+        // Corrected calculation for landscape mode where the phone is on its left side.
+        // Pitch (car's nose up/down) is now rotation around the phone's Y-axis.
+        _data.rawPitch = atan2(-event.x, event.z) * 180 / pi;
+        // Roll (car's body tilt) is now rotation around the phone's X-axis.
         _data.rawRoll =
-            atan2(-event.x, sqrt(event.y * event.y + event.z * event.z)) *
+            atan2(event.y, sqrt(event.x * event.x + event.z * event.z)) *
             180 /
             pi;
+
         _data.pitch = _data.rawPitch - _data.offsetPitch;
         _data.roll = _data.rawRoll - _data.offsetRoll;
       });
@@ -55,6 +62,7 @@ class SensorService {
 
     magnetometerEventStream().listen((MagnetometerEvent event) {
       _data.updateData(() {
+        // Read raw magnetometer
         _data.magX = event.x;
         _data.magY = event.y;
         _data.magZ = event.z;
@@ -65,15 +73,47 @@ class SensorService {
           _data.calibrationReadingsZ.add(_data.magZ);
         }
 
+        // Apply hard-iron offsets from calibration
         double calX = _data.magX - _data.magOffsetX;
         double calY = _data.magY - _data.magOffsetY;
         double calZ = _data.magZ - _data.magOffsetZ;
 
-        _data.heading = _calculateTiltCompensatedHeadingWithData(
+        // Compute tilt-compensated heading using current pitch/roll
+        double computedHeading = _calculateTiltCompensatedHeadingWithData(
           calX,
           calY,
           calZ,
         );
+
+        // Apply heading offset (set when user performs a North calibration)
+        double adjusted = (computedHeading - _data.headingOffset) % 360.0;
+        if (adjusted < 0) adjusted += 360.0;
+
+        // Add to circular buffer
+        if (_headingBuffer.length >= _headingBufferSize) {
+          _headingBuffer.removeAt(0);
+        }
+        _headingBuffer.add(adjusted);
+
+        // Compute circular mean of headings in buffer
+        double sumX = 0.0;
+        double sumY = 0.0;
+        for (double h in _headingBuffer) {
+          double rad = h * pi / 180.0;
+          sumX += cos(rad);
+          sumY += sin(rad);
+        }
+        if (_headingBuffer.isEmpty) {
+          _data.heading = adjusted;
+        } else {
+          double avgRad = atan2(
+            sumY / _headingBuffer.length,
+            sumX / _headingBuffer.length,
+          );
+          double avgDeg = (avgRad * 180.0 / pi) % 360.0;
+          if (avgDeg < 0) avgDeg += 360.0;
+          _data.heading = avgDeg;
+        }
       });
     });
   }
@@ -226,10 +266,16 @@ class SensorService {
   }
 
   void performNorthCalibration() {
+    // Use current computed heading as the forward baseline (0°) for the app.
+    // This makes subsequent heading values relative to the car's forward direction
+    // when the device is mounted and aligned.
     _data.updateData(() {
       _data.magOffsetX = _data.magX;
       _data.magOffsetY = _data.magY;
       _data.magOffsetZ = _data.magZ;
+      // Capture current heading as baseline. We use the already-smoothed heading
+      // so the baseline is stable.
+      _data.headingOffset = _data.heading;
     });
   }
 
