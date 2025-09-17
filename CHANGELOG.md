@@ -67,8 +67,16 @@
 
 
 ## 1.0.7, Changelog screen added, 2025-09-17 12:54:24, d3983d6
-bin/release.sh
-lib/changelog_screen.dart
-lib/digital_inclinometer_screen.dart
-pubspec.lock
-pubspec.yaml
+
+- `lib/changelog_screen.dart`:
+	- Loads `CHANGELOG.md` as an asset and renders it with `flutter_markdown`, making the canonical changelog readable in-app without parsing at runtime.
+	- Uses `SafeArea` + padded `Markdown` rendering to avoid notch/edge clipping, and a compact monospace header style for fidelity with the app's retro font.
+	- Styling is intentionally theme-aware while forcing `alertColor` for headings so important section titles remain visible and consistent with the app's visual language.
+
+- `lib/digital_inclinometer_screen.dart`:
+	- LOG button long-press now navigates to the Changelog screen; short-tap still toggles `debugMode` (preserves existing UX while adding a discoverable dev path).
+	- Minimal routing added via `Navigator.push` — keeps routing local and simple without introducing a global route table yet.
+
+Notes:
+- This release focuses on developer ergonomics and observability: having the changelog in-app makes field diagnostics and quick release checks easier, and the long-press discovery aligns with the existing LOG/debug affordance.
+

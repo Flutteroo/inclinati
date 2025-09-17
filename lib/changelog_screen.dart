@@ -32,31 +32,42 @@ class ChangelogScreen extends StatelessWidget {
             }
             final contents = snapshot.data ?? 'No changelog available.';
             final base = Theme.of(context);
-      final ms = MarkdownStyleSheet.fromTheme(base).copyWith(
-        h1: base.textTheme.headlineSmall
-          ?.copyWith(color: alertColor, fontFamily: '3270NerdFont'),
-        h2: base.textTheme.titleLarge
-          ?.copyWith(color: alertColor, fontFamily: '3270NerdFont'),
-        h3: base.textTheme.titleMedium
-          ?.copyWith(color: alertColor, fontFamily: '3270NerdFont'),
-        p: base.textTheme.bodySmall?.copyWith(fontSize: (base.textTheme.bodySmall?.fontSize ?? 14) + 2),
-        code: base.textTheme.bodySmall
-          ?.copyWith(color: alertColor, fontFamily: '3270NerdFont'),
+            final ms = MarkdownStyleSheet.fromTheme(base).copyWith(
+              h1: base.textTheme.headlineSmall?.copyWith(
+                color: alertColor,
+                fontFamily: '3270NerdFont',
+              ),
+              h2: base.textTheme.titleLarge?.copyWith(
+                color: alertColor,
+                fontFamily: '3270NerdFont',
+              ),
+              h3: base.textTheme.titleMedium?.copyWith(
+                color: alertColor,
+                fontFamily: '3270NerdFont',
+              ),
+              p: base.textTheme.bodySmall?.copyWith(
+                fontSize: (base.textTheme.bodySmall?.fontSize ?? 14) + 2,
+              ),
+              code: base.textTheme.bodySmall?.copyWith(
+                color: alertColor,
+                fontFamily: '3270NerdFont',
+              ),
               codeblockDecoration: BoxDecoration(
                 color: Colors.black26,
                 borderRadius: BorderRadius.circular(6),
               ),
-              blockquote: base.textTheme.bodySmall?.copyWith(color: Colors.white70),
+              blockquote: base.textTheme.bodySmall?.copyWith(
+                color: Colors.white70,
+              ),
               listBullet: base.textTheme.bodySmall,
             );
 
             return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-              child: Markdown(
-                data: contents,
-                selectable: true,
-                styleSheet: ms,
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16.0,
+                vertical: 12.0,
               ),
+              child: Markdown(data: contents, selectable: true, styleSheet: ms),
             );
           },
         ),
