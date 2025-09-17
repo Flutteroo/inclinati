@@ -156,7 +156,47 @@ class SensorService {
         _data.latitude = position.latitude;
         _data.longitude = position.longitude;
         _data.altitude = position.altitude;
-        _data.speed = position.speed * 3.6;
+        // Primary source: device-reported speed (m/s -> km/h)
+        double gpsSpeedKmh = (position.speed.isFinite)
+            ? position.speed * 3.6
+            : 0.0;
+
+        // Fallback: compute speed from distance / time between last and current position
+        double derivedSpeedKmh = 0.0;
+        if (_data.lastLatitude != null &&
+            _data.lastLongitude != null &&
+            _data.lastPositionTime != null) {
+          double distance = _calculateDistance(
+            _data.lastLatitude!,
+            _data.lastLongitude!,
+            position.latitude,
+            position.longitude,
+          );
+          double deltaSeconds =
+              position.timestamp
+                  .difference(_data.lastPositionTime!)
+                  .inMilliseconds /
+              1000.0;
+
+          if (deltaSeconds > 0.5) {
+            // distance is meters -> m/s, convert to km/h via *3.6
+            derivedSpeedKmh = (distance / deltaSeconds) * 3.6;
+          }
+        }
+
+        // Choose the more conservative (higher) estimate, but treat very small
+        // values as stationary to avoid sticking due to GPS jitter.
+        double finalSpeedKmh = gpsSpeedKmh;
+        if (derivedSpeedKmh.isFinite && derivedSpeedKmh > finalSpeedKmh) {
+          finalSpeedKmh = derivedSpeedKmh;
+        }
+
+        // Noise threshold: anything below 1.0 km/h is considered stopped.
+        if (finalSpeedKmh < 1.0) {
+          finalSpeedKmh = 0.0;
+        }
+
+        _data.speed = finalSpeedKmh;
 
         if (_data.lastLatitude != null &&
             _data.lastLongitude != null &&
