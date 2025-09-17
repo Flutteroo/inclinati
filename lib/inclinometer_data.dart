@@ -36,6 +36,19 @@ class InclinometerData extends ChangeNotifier {
   // the displayed heading is relative to the calibrated forward direction.
   double headingOffset = 0.0;
 
+  // EMA smoothing parameters for pitch/roll (alpha in [0..1]).
+  // Higher alpha -> more responsive; lower alpha -> smoother.
+  double emaPitchAlpha = 0.4; // ~ moderate smoothing
+  double emaRollAlpha = 0.4;
+
+  // Internal EMA state (private-ish but exposed for simplicity)
+  double emaPitch = 0.0;
+  double emaRoll = 0.0;
+  // Indicates we just performed a zero/calibrate action and are waiting for
+  // the EMA-filtered pitch/roll to settle near zero. UI can show a transient
+  // "ZEROING..." state while this is true.
+  bool isZeroing = false;
+
   void updateData(VoidCallback updater) {
     updater();
     notifyListeners();

@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 // ); // Dark blue background
 const Color themeColor = Color.fromARGB(255, 0, 0, 0); // Dark blue background
 const Color accentColor = Color.fromARGB(255, 115, 115, 115); // Grey accent
+const Color alertColor = Color.fromARGB(255, 217, 71, 27); // Orange alert
 const MaterialColor primarySwatch = Colors.green;
 
 // Essential text styles using the nerd font
@@ -16,7 +17,7 @@ const TextStyle mainMetricStyle = TextStyle(
   fontSize: 25.0,
   fontFamily: '3270NerdFont',
   fontWeight: FontWeight.bold,
-  color: Color.fromARGB(208, 217, 71, 27),
+  color: alertColor,
 );
 
 const TextStyle secondaryMetricStyle = TextStyle(

@@ -47,8 +47,25 @@ class SensorService {
             180 /
             pi;
 
-        _data.pitch = _data.rawPitch - _data.offsetPitch;
-        _data.roll = _data.rawRoll - _data.offsetRoll;
+        // Apply offset to get relative pitch/roll
+        double pitchUnfiltered = _data.rawPitch - _data.offsetPitch;
+        double rollUnfiltered = _data.rawRoll - _data.offsetRoll;
+
+        // Initialize EMA state on first reading to avoid startup bias
+        if (_data.emaPitch == 0.0 && _data.emaRoll == 0.0) {
+          _data.emaPitch = pitchUnfiltered;
+          _data.emaRoll = rollUnfiltered;
+        }
+
+        // Exponential Moving Average: new = alpha * sample + (1-alpha) * old
+        double aPitch = _data.emaPitchAlpha.clamp(0.0, 1.0);
+        double aRoll = _data.emaRollAlpha.clamp(0.0, 1.0);
+        _data.emaPitch =
+            aPitch * pitchUnfiltered + (1 - aPitch) * _data.emaPitch;
+        _data.emaRoll = aRoll * rollUnfiltered + (1 - aRoll) * _data.emaRoll;
+
+        _data.pitch = _data.emaPitch;
+        _data.roll = _data.emaRoll;
       });
     });
 
@@ -289,9 +306,17 @@ class SensorService {
   }
 
   void calibrate() {
+    // Immediate zeroing: commit offsets and bypass EMA so UI resets instantly.
     _data.updateData(() {
       _data.offsetPitch = _data.rawPitch;
       _data.offsetRoll = _data.rawRoll;
+      // Bypass smoothing by setting EMA state to the unfiltered zero value.
+      _data.emaPitch = 0.0;
+      _data.emaRoll = 0.0;
+      _data.isZeroing = false;
+      // Also update the exposed pitch/roll immediately for UI consistency.
+      _data.pitch = 0.0;
+      _data.roll = 0.0;
     });
   }
 

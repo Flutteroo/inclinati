@@ -24,5 +24,17 @@
 
 
 ## 1.0.4, tachometer algorithm refactored, 2025-09-17 00:25:06, fbb2132
+
+- `lib/sensor_service.dart`:
+	- **Stop-detection guard:** added a conservative heuristic that forces `speed = 0` when consecutive GPS fixes show negligible displacement (<0.5 m) over a multi-second window (>2 s) and accelerometer-derived `gForce` is near 1g (here <1.05). This prevents rare cases where GPS jitter produces a persistent non-zero speed while stationary.
+	- **Why combine modalities:** spatial + temporal + inertial checks reduce false positives from any single sensor (GPS drift, temporary fix loss, or small device vibrations). The guard is intentionally conservative to avoid masking legitimate slow motion.
+	- **Implementation notes:** retains previous thresholding (final speed <1.0 km/h zeroed) and odometer gating (>2.0 km/h) — odometer behavior remains unchanged.
+	- **Tuning & next steps:** thresholds are hard-coded for now; consider exposing them in `InclinometerData` or gating by `position.accuracy`. For better transient handling, a complementary filter with device motion/gyroscope would preserve responsiveness while suppressing jitter.
+
+
+## 1.0.5, improved UI/UX, press to confirm BTN, 2025-09-17 03:43:59, 0005238
 CHANGELOG.md
+lib/constants.dart
+lib/digital_inclinometer_screen.dart
+lib/inclinometer_data.dart
 lib/sensor_service.dart
