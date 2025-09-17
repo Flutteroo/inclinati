@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
 import 'constants.dart';
 import 'inclinometer_data.dart';
 import 'sensor_service.dart';
@@ -29,12 +30,12 @@ class _DigitalInclinometerScreenState extends State<DigitalInclinometerScreen> {
   @override
   Widget build(BuildContext context) {
     final List<Widget> gridItems = [
-      // Row 1
       _buildMetric(
         'Pitch',
-        '${widget.data.pitch.toStringAsFixed(0)}°',
+        '${_formatAngleZeroFix(widget.data.pitch)}°',
         null,
         Alignment.centerLeft,
+        'raw:${widget.data.rawPitch.toStringAsFixed(1)}°',
       ),
       _buildSpeedMetric(context),
       _buildMetric(
@@ -42,13 +43,14 @@ class _DigitalInclinometerScreenState extends State<DigitalInclinometerScreen> {
         '${widget.data.heading.toStringAsFixed(0)}° ${_getCardinalDirection(widget.data.heading)}',
         null,
         Alignment.centerRight,
+        'mag:${widget.data.magX.toStringAsFixed(1)},${widget.data.magY.toStringAsFixed(1)}',
       ),
-      // Row 2
       _buildMetric(
         'Roll',
-        '${widget.data.roll.toStringAsFixed(0)}°',
+        '${_formatAngleZeroFix(widget.data.roll)}°',
         null,
         Alignment.centerLeft,
+        'raw:${widget.data.rawRoll.toStringAsFixed(1)}°',
       ),
       _buildOdometer(context),
       _buildMetric(
@@ -59,14 +61,14 @@ class _DigitalInclinometerScreenState extends State<DigitalInclinometerScreen> {
         null,
         Alignment.centerRight,
       ),
-      // Row 3
       _buildMetric(
         'Acceleration',
         '${widget.data.gForce.toStringAsFixed(1)}G',
         null,
         Alignment.centerLeft,
+        'mag:${(widget.data.gForce * 9.81).toStringAsFixed(2)}m/s²',
       ),
-      _buildCalibrationButtons(context),
+      const SizedBox.shrink(),
       _buildGps(Alignment.centerRight),
     ];
 
@@ -77,13 +79,13 @@ class _DigitalInclinometerScreenState extends State<DigitalInclinometerScreen> {
             padding: const EdgeInsets.all(32.0),
             child: GridView.count(
               crossAxisCount: 3,
-              childAspectRatio: 2.2, // Adjust for better spacing
+              childAspectRatio: 2.2,
               mainAxisSpacing: 6,
               crossAxisSpacing: 6,
               children: gridItems,
             ),
           ),
-          // Right-side hold banner
+
           if (_showHoldBanner)
             Center(
               child: AnimatedOpacity(
@@ -118,9 +120,101 @@ class _DigitalInclinometerScreenState extends State<DigitalInclinometerScreen> {
                 ),
               ),
             ),
+
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 16,
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: themeColor.withValues(alpha: 0.95),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: alertColor.withValues(alpha: 0.75)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    HoldToConfirmButton(
+                      onConfirmed: () {
+                        widget.sensorService.calibrate();
+                        _showFloatingSnackBar(
+                          context,
+                          'The Calibration of the Inclinometer is Completed',
+                        );
+                      },
+                      duration: const Duration(seconds: 2),
+                      style: _buttonStyle(),
+                      message:
+                          'Keep holding to calibrate the inclinometer (PITCH/ROLL 0°)',
+                      onStart: (msg) {
+                        setState(() {
+                          _holdMessage = msg ?? 'Hold to confirm';
+                          _showHoldBanner = true;
+                        });
+                      },
+                      onCancel: () {
+                        setState(() {
+                          _showHoldBanner = false;
+                          _holdProgress = 0.0;
+                        });
+                      },
+                      onProgress: (p) {
+                        setState(() {
+                          _holdProgress = p;
+                        });
+                      },
+                      child: const Text(
+                        'CAL INCL',
+                        style: TextStyle(fontSize: 16),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    ElevatedButton(
+                      onPressed: () => _showCompassCalibrationDialog(context),
+                      style: _buttonStyle(),
+                      child: const Text('CAL COMP'),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                      onPressed: () {
+                        Provider.of<InclinometerData>(
+                          context,
+                          listen: false,
+                        ).toggleDebugMode();
+                      },
+                      style: _buttonStyle().copyWith(
+                        padding: WidgetStateProperty.resolveWith(
+                          (_) => const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                        ),
+                        textStyle: WidgetStateProperty.resolveWith(
+                          (_) => buttonTextStyle.copyWith(fontSize: 12),
+                        ),
+                      ),
+                      child: const Text('LOG'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
+  }
+
+  String _formatAngleZeroFix(double angle) {
+    // Round to nearest integer but avoid '-0'
+    final rounded = angle.round();
+    if (rounded == 0) return '0';
+    return rounded.toString();
   }
 
   Widget _buildMetric(
@@ -128,6 +222,7 @@ class _DigitalInclinometerScreenState extends State<DigitalInclinometerScreen> {
     String value, [
     String? unit,
     Alignment alignment = Alignment.center,
+    String? debugText,
   ]) {
     return Align(
       alignment: alignment,
@@ -139,22 +234,53 @@ class _DigitalInclinometerScreenState extends State<DigitalInclinometerScreen> {
                   ? CrossAxisAlignment.end
                   : CrossAxisAlignment.center),
         children: [
+          // If debugText is provided and debugMode is active, append it to the title
           Text(
-            label.toUpperCase(),
+            widget.data.debugMode && debugText != null
+                ? '$label — $debugText'.toUpperCase()
+                : label.toUpperCase(),
             style: smallTextStyle.copyWith(color: Colors.grey[400]),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
           const SizedBox(height: 8),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
-            children: [
-              Text(value, style: mainMetricStyle.copyWith(fontSize: 42)),
-              if (unit != null) ...[
-                const SizedBox(width: 8),
-                Text(unit, style: secondaryMetricStyle.copyWith(fontSize: 20)),
-              ],
-            ],
+          LayoutBuilder(
+            builder: (ctx, constraints) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
+                    children: [
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: constraints.maxWidth * 0.9,
+                        ),
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            value,
+                            style: mainMetricStyle.copyWith(fontSize: 42),
+                          ),
+                        ),
+                      ),
+                      if (unit != null) ...[
+                        const SizedBox(width: 8),
+                        Text(
+                          unit,
+                          style: secondaryMetricStyle.copyWith(fontSize: 20),
+                        ),
+                      ],
+                    ],
+                  ),
+                  // debug info appended to title above; no separate debug line here
+                ],
+              );
+            },
           ),
         ],
       ),
@@ -240,63 +366,13 @@ class _DigitalInclinometerScreenState extends State<DigitalInclinometerScreen> {
     );
   }
 
-  Widget _buildCalibrationButtons(BuildContext context) {
-    return Align(
-      alignment: Alignment.bottomCenter,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          HoldToConfirmButton(
-            onConfirmed: () => {
-              widget.sensorService.calibrate(),
-              _showFloatingSnackBar(
-                context,
-                'The Calibration of the Inclinometer is Completed',
-              ),
-            },
-            duration: const Duration(seconds: 2),
-            style: _buttonStyle(),
-            message:
-                'Keep holding to calibrate the inclinometer (PITCH/ROLL 0°)',
-            onStart: (msg) {
-              setState(() {
-                _holdMessage = msg ?? 'Hold to confirm';
-                _showHoldBanner = true;
-              });
-            },
-            onCancel: () {
-              setState(() {
-                _showHoldBanner = false;
-                _holdProgress = 0.0;
-              });
-            },
-            onProgress: (p) {
-              setState(() {
-                _holdProgress = p;
-              });
-            },
-            child: const Text('CAL INCL', style: TextStyle(fontSize: 16)),
-          ),
-          const SizedBox(width: 12),
-          ElevatedButton(
-            onPressed: () {
-              _showCompassCalibrationDialog(context);
-            },
-            style: _buttonStyle(),
-            child: const Text('CAL COMP'),
-          ),
-        ],
-      ),
-    );
-  }
-
   static ButtonStyle _buttonStyle() {
     return ElevatedButton.styleFrom(
       backgroundColor: alertColor.withValues(alpha: 0.35),
       foregroundColor: Colors.white,
       side: BorderSide(color: Colors.white, width: 1),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8.0)),
-      padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
       textStyle: buttonTextStyle.copyWith(fontSize: 16),
     );
   }
@@ -405,7 +481,7 @@ class _DigitalInclinometerScreenState extends State<DigitalInclinometerScreen> {
 }
 
 /// A button that requires the user to press-and-hold for [duration] to confirm.
-/// Shows a circular progress indicator filling up while held.
+/// Shows a progress fill while held and reports progress via callbacks.
 class HoldToConfirmButton extends StatefulWidget {
   final Widget child;
   final ButtonStyle style;
@@ -490,7 +566,7 @@ class _HoldToConfirmButtonState extends State<HoldToConfirmButton> {
         alignment: Alignment.center,
         children: [
           ElevatedButton(
-            onPressed: () => {},
+            onPressed: () {},
             style: widget.style,
             child: widget.child,
           ),
@@ -500,16 +576,28 @@ class _HoldToConfirmButtonState extends State<HoldToConfirmButton> {
               bottom: 8,
               left: 4,
               right: 4,
-              child: Container(
-                decoration: BoxDecoration(
-                  color: _active
-                      ? alertColor.withValues(alpha: 1)
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(5.0),
+              child: Opacity(
+                opacity: 0.25,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: alertColor,
+                    borderRadius: BorderRadius.circular(5.0),
+                  ),
                 ),
               ),
             ),
-          if (_active) widget.child,
+          if (_active)
+            Positioned(
+              bottom: 6,
+              left: 6,
+              right: 6,
+              child: LinearProgressIndicator(
+                value: _progress,
+                color: Colors.white,
+                backgroundColor: Colors.white.withValues(alpha: 0.15),
+                minHeight: 4,
+              ),
+            ),
         ],
       ),
     );

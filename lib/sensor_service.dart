@@ -9,6 +9,20 @@ import 'inclinometer_data.dart';
 
 class SensorService {
   final InclinometerData _data;
+  // Gravity estimate used to separate linear acceleration from gravity.
+  // We maintain a low-pass filtered gravity vector and compute pitch/roll
+  // from that vector instead of raw accelerometer samples. This reduces
+  // apparent tilt changes caused by lateral/centripetal accelerations
+  // when the vehicle turns.
+  double _gravX = 0.0;
+  double _gravY = 0.0;
+  double _gravZ = 0.0;
+  // Gravity low-pass alpha in [0..1]. Higher -> smoother/slower gravity.
+  final double _gravityAlpha = 0.92;
+  // Linear acceleration threshold (m/s^2) above which we consider the
+  // vehicle to be undergoing significant turn/brake/accel and therefore
+  // we should make pitch/roll smoothing more aggressive.
+  final double _linearAccelThreshold = 1.96; // ~0.2 g
   // buffer for recent heading values (degrees) to compute a circular mean
   final List<double> _headingBuffer = [];
   final int _headingBufferSize = 10;
@@ -38,14 +52,33 @@ class SensorService {
   void _initializeSensors() {
     accelerometerEventStream().listen((AccelerometerEvent event) {
       _data.updateData(() {
-        // Corrected calculation for landscape mode where the phone is on its left side.
-        // Pitch (car's nose up/down) is now rotation around the phone's Y-axis.
-        _data.rawPitch = atan2(-event.x, event.z) * 180 / pi;
-        // Roll (car's body tilt) is now rotation around the phone's X-axis.
-        _data.rawRoll =
-            atan2(event.y, sqrt(event.x * event.x + event.z * event.z)) *
-            180 /
-            pi;
+        // Update a low-pass filtered gravity estimate. This separates
+        // gravity from linear acceleration (vehicle turns, braking, etc.).
+        _gravX = _gravityAlpha * _gravX + (1 - _gravityAlpha) * event.x;
+        _gravY = _gravityAlpha * _gravY + (1 - _gravityAlpha) * event.y;
+        _gravZ = _gravityAlpha * _gravZ + (1 - _gravityAlpha) * event.z;
+
+        // Compute linear acceleration (raw - gravity). Use this to detect
+        // when the vehicle is turning or accelerating/braking so we can
+        // temporarily make smoothing more aggressive.
+        double linX = event.x - _gravX;
+        double linY = event.y - _gravY;
+        double linZ = event.z - _gravZ;
+        double linMag = sqrt(linX * linX + linY * linY + linZ * linZ);
+
+        // Compute pitch/roll from the gravity vector. Respect the
+        // device mount orientation flag so axis mapping matches the
+        // physical mounting (landscape vs portrait).
+        if (_data.deviceIsLandscape) {
+          _data.rawPitch = atan2(-_gravX, _gravZ) * 180 / pi;
+          _data.rawRoll =
+              atan2(_gravY, sqrt(_gravX * _gravX + _gravZ * _gravZ)) * 180 / pi;
+        } else {
+          // Portrait mapping (fallback)
+          _data.rawPitch = atan2(-_gravY, _gravZ) * 180 / pi;
+          _data.rawRoll =
+              atan2(_gravX, sqrt(_gravY * _gravY + _gravZ * _gravZ)) * 180 / pi;
+        }
 
         // Apply offset to get relative pitch/roll
         double pitchUnfiltered = _data.rawPitch - _data.offsetPitch;
@@ -58,8 +91,17 @@ class SensorService {
         }
 
         // Exponential Moving Average: new = alpha * sample + (1-alpha) * old
+        // If linear acceleration is high (turn/brake), reduce responsiveness
+        // by lowering alpha (make EMA smoother). This prevents transient
+        // lateral acceleration from being interpreted as tilt.
         double aPitch = _data.emaPitchAlpha.clamp(0.0, 1.0);
         double aRoll = _data.emaRollAlpha.clamp(0.0, 1.0);
+        if (linMag > _linearAccelThreshold) {
+          // Make smoothing more aggressive during significant linear accel.
+          aPitch = (aPitch * 0.25).clamp(0.02, aPitch);
+          aRoll = (aRoll * 0.25).clamp(0.02, aRoll);
+        }
+
         _data.emaPitch =
             aPitch * pitchUnfiltered + (1 - aPitch) * _data.emaPitch;
         _data.emaRoll = aRoll * rollUnfiltered + (1 - aRoll) * _data.emaRoll;

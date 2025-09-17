@@ -9,6 +9,21 @@ class InclinometerData extends ChangeNotifier {
   double rawRoll = 0.0;
   double offsetPitch = 0.0;
   double offsetRoll = 0.0;
+  // Device mount orientation: if true, the device is mounted in landscape
+  // (screen rotated 90°). This flag lets the sensor service adjust axis
+  // mapping and calibration flows when needed. Default is `true` because
+  // this app targets dashboard mounting in landscape by default.
+  bool deviceIsLandscape = true;
+  // When true, small debug logs will be shown near widgets in the UI.
+  // This is toggled by the LOG button in the main screen and is intended
+  // for short-lived diagnostics while tuning the sensor behavior.
+  bool debugMode = false;
+
+  void toggleDebugMode() {
+    debugMode = !debugMode;
+    notifyListeners();
+  }
+
   int precision = 0;
   double speed = 0.0;
   double gForce = 0.0;
