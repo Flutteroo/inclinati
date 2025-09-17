@@ -65,3 +65,10 @@
 
 - These changes are primarily about observability, UI robustness, and small precision tuning — they avoid invasive changes to the core sensor-fusion algorithms while making it much easier to diagnose and tune behavior on-device.
 
+
+## 1.0.7, Changelog screen added, 2025-09-17 12:54:24, d3983d6
+bin/release.sh
+lib/changelog_screen.dart
+lib/digital_inclinometer_screen.dart
+pubspec.lock
+pubspec.yaml

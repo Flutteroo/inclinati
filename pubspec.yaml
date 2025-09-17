@@ -1,7 +1,7 @@
 name: inclinati
 description: "A new Flutter project."
 publish_to: 'none'
-version: 1.0.6
+version: 1.0.7
 environment:
   sdk: ^3.10.0-74.0.dev
 dependencies:
@@ -12,6 +12,7 @@ dependencies:
   geolocator: ^14.0.2
   shared_preferences: ^2.5.3
   provider: ^6.1.5+1
+  flutter_markdown: ^0.6.10
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -22,3 +23,5 @@ flutter:
     - family: 3270NerdFont
       fonts:
         - asset: fonts/3270NerdFontMono-Condensed.ttf
+  assets:
+    - CHANGELOG.md

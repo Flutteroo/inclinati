@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'constants.dart';
 import 'inclinometer_data.dart';
 import 'sensor_service.dart';
+import 'changelog_screen.dart';
 
 class DigitalInclinometerScreen extends StatefulWidget {
   final InclinometerData data;
@@ -186,6 +187,13 @@ class _DigitalInclinometerScreenState extends State<DigitalInclinometerScreen> {
                           context,
                           listen: false,
                         ).toggleDebugMode();
+                      },
+                      onLongPress: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const ChangelogScreen(),
+                          ),
+                        );
                       },
                       style: _buttonStyle().copyWith(
                         padding: WidgetStateProperty.resolveWith(
