@@ -48,64 +48,20 @@
 - These changes prioritize clear, fast, and safe user interactions: immediate visual feedback reduces uncertainty, while the hold-to-confirm pattern prevents accidental calibrations. The floating snackbars and dialog styling make calibration flows feel integrated with the app's visual language.
 
 ## 1.0.6, debug feature, improved INC precision, 2025-09-17 12:24:19, 662bcbf
-CHANGELOG.md
-README.md
-lib/digital_inclinometer_screen.dart
-lib/inclinometer_data.dart
-lib/sensor_service.dart
-macos/.gitignore
-macos/Flutter/Flutter-Debug.xcconfig
-macos/Flutter/Flutter-Release.xcconfig
-macos/Flutter/GeneratedPluginRegistrant.swift
-macos/Podfile
-macos/Runner.xcodeproj/project.pbxproj
-macos/Runner.xcodeproj/project.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
-macos/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme
-macos/Runner.xcworkspace/contents.xcworkspacedata
-macos/Runner.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
-macos/Runner/AppDelegate.swift
-macos/Runner/Assets.xcassets/AppIcon.appiconset/Contents.json
-macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_1024.png
-macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_128.png
-macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_16.png
-macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_256.png
-macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_32.png
-macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_512.png
-macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_64.png
-macos/Runner/Base.lproj/MainMenu.xib
-macos/Runner/Configs/AppInfo.xcconfig
-macos/Runner/Configs/Debug.xcconfig
-macos/Runner/Configs/Release.xcconfig
-macos/Runner/Configs/Warnings.xcconfig
-macos/Runner/DebugProfile.entitlements
-macos/Runner/Info.plist
-macos/Runner/MainFlutterWindow.swift
-macos/Runner/Release.entitlements
-macos/RunnerTests/RunnerTests.swift
-pubspec.lock
-pubspec.yaml
-web/favicon.png
-web/icons/Icon-192.png
-web/icons/Icon-512.png
-web/icons/Icon-maskable-192.png
-web/icons/Icon-maskable-512.png
-web/index.html
-web/manifest.json
-windows/.gitignore
-windows/CMakeLists.txt
-windows/flutter/CMakeLists.txt
-windows/flutter/generated_plugin_registrant.cc
-windows/flutter/generated_plugin_registrant.h
-windows/flutter/generated_plugins.cmake
-windows/runner/CMakeLists.txt
-windows/runner/Runner.rc
-windows/runner/flutter_window.cpp
-windows/runner/flutter_window.h
-windows/runner/main.cpp
-windows/runner/resource.h
-windows/runner/resources/app_icon.ico
-windows/runner/runner.exe.manifest
-windows/runner/utils.cpp
-windows/runner/utils.h
-windows/runner/win32_window.cpp
-windows/runner/win32_window.h
+
+- `lib/digital_inclinometer_screen.dart`:
+	- Debug overlay + compact debug rendering: debug values are now appended to the metric title (instead of a separate small line under the value) to avoid layout overflow while keeping debug info available at a glance.
+	- Robust metric layout: metrics use `LayoutBuilder` + `ConstrainedBox` + `FittedBox` to ensure large numerics scale or truncate safely instead of overflowing (fixes the "OVERFLOWED BY X PIXELS" cases in landscape).
+	- UI-level precision helpers: added `_formatAngleZeroFix(double)` to round angles but normalize both `-0` and `0` to `0` to avoid confusing negative-zero displays.
+	- Themed, consistent controls: button style centralization and hold-to-confirm progress wiring were extended to integrate debug toggles and snackbars with consistent theming. Deprecated Material APIs were migrated (`MaterialStateProperty` → `WidgetStateProperty`) and opacity helpers consolidated (`withOpacity` → `withValues`) for forward-compatibility.
+
+- `lib/inclinometer_data.dart`:
+	- Debug surfacing: `InclinometerData` exposes a `debugMode` toggle and small, read-only sensor fields (raw pitch/roll, magnetometer axes, gForce, etc.) so the UI can show diagnostic values without coupling into sensor internals.
+	- State-driven calibration: minor additions to make calibration state (offsets, debug flags) part of the serializable app state so UI actions can persist and restore debug/precision settings cleanly.
+
+- `lib/sensor_service.dart`:
+	- Precision & observability tweaks: small tuning of smoothing windows and the data the service publishes for diagnostics (more stable heading samples, clearer raw->corrected value separation) to improve inclinometer precision while keeping the fusion math intact.
+	- Non-invasive instrumentation: sensor internals now emit read-only values into `InclinometerData` for UI consumption, enabling debug overlays without changing core fusion algorithms; this helps reproduce issues without altering runtime behavior.
+
+- These changes are primarily about observability, UI robustness, and small precision tuning — they avoid invasive changes to the core sensor-fusion algorithms while making it much easier to diagnose and tune behavior on-device.
+

@@ -55,6 +55,3 @@ EOF
 
 git add CHANGELOG.md
 git commit -am "${MSG} (${VERSION})"
-
-# update dependencies
-flutter pub get
