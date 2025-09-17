@@ -13,8 +13,16 @@
 	- **Notes on stability:** circular-mean smoothing reduces jitter but introduces latency proportional to buffer size; chosen buffer length trades noise for responsiveness. Consider adaptive buffer sizing based on vehicle speed or a complementary filter with gyroscope data for better transient response.
 
 
-## 1.0.3, geolocated tachimeter refined, 2025-09-17 00:20:46, 691b46c
+## 1.0.3, geo-located tachometer refined, 2025-09-17 00:20:46, 691b46c
+
+- `lib/sensor_service.dart`:
+	- **Merged speed source:** device `position.speed` (m/s → km/h) is used as primary; a derived speed is computed from distance / delta-time between consecutive GPS fixes as a fallback when device-reported speed is unreliable.
+	- **Conservative selection + thresholding:** the implementation selects the larger of GPS vs derived speed to avoid masking real movement, then zeroes any value below `1.0 km/h` to suppress GPS jitter when stationary.
+	- **Delta-time guard:** derived speed is only computed when the time delta between fixes is > 0.5s to prevent division by extremely small deltas that amplify noise.
+	- **Why this approach:** avoids persistent small non-zero speeds caused by GPS jitter while still catching genuine low-speed motion; keeps odometer updates conservative (still gated by >2.0 km/h as before).
+	- **Testing notes:** threshold can be tuned; consider gating derived-speed with `position.accuracy` and/or adding a short low-pass filter to further reduce spikes.
+
+
+## 1.0.4, tachometer algorithm refactored, 2025-09-17 00:25:06, fbb2132
 CHANGELOG.md
-REVISION
 lib/sensor_service.dart
-pubspec.yaml.bak

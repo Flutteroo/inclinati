@@ -184,11 +184,33 @@ class SensorService {
           }
         }
 
-        // Choose the more conservative (higher) estimate, but treat very small
-        // values as stationary to avoid sticking due to GPS jitter.
+        // Choose the more conservative (higher) estimate.
         double finalSpeedKmh = gpsSpeedKmh;
         if (derivedSpeedKmh.isFinite && derivedSpeedKmh > finalSpeedKmh) {
           finalSpeedKmh = derivedSpeedKmh;
+        }
+
+        // Stop-detection guard: if consecutive GPS fixes show negligible
+        // displacement (here <0.5 m) over a reasonable time window (>2s), and
+        // accelerometer indicates near-1g (no linear acceleration), treat as
+        // stationary to avoid "stuck" non-zero speeds.
+        if (_data.lastLatitude != null &&
+            _data.lastLongitude != null &&
+            _data.lastPositionTime != null) {
+          double smallDistance = _calculateDistance(
+            _data.lastLatitude!,
+            _data.lastLongitude!,
+            position.latitude,
+            position.longitude,
+          );
+          double dt =
+              position.timestamp
+                  .difference(_data.lastPositionTime!)
+                  .inMilliseconds /
+              1000.0;
+          if (dt > 2.0 && smallDistance < 0.5 && _data.gForce < 1.05) {
+            finalSpeedKmh = 0.0;
+          }
         }
 
         // Noise threshold: anything below 1.0 km/h is considered stopped.
