@@ -9,10 +9,10 @@ increment_version() {
     local minor=${version_parts[1]}
     local maintenance=${version_parts[2]}
     maintenance=$((maintenance + 1))
-    if ((maintenance > 42)); then
+    if ((maintenance > 9)); then
         maintenance=0
         minor=$((minor + 1))
-        if ((minor > 42)); then
+        if ((minor > 9)); then
             minor=0
             major=$((major + 1))
         fi
@@ -56,4 +56,4 @@ EOF
 git add CHANGELOG.md
 git commit -am "${MSG} (${VERSION})"
 
-echo "Read CHANGELOG.md and annotate the changes of the last commit in a technical way, using markdown, but only highlighting the geeky and engineeringly interesting stuff! Only reference the files that are listed in the latest block! Update the changelog with your contribution! <3"
+# echo "Read CHANGELOG.md and annotate the changes of the last commit in a technical way, using markdown, but only highlighting the geeky and engineeringly interesting stuff! Only reference the files that are listed in the latest block! Update the changelog with your contribution! <3"

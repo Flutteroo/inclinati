@@ -97,3 +97,6 @@ lib/obd/probe_screen.dart
 lib/sensor_service.dart
 pubspec.lock
 pubspec.yaml
+
+## 1.0.9, version control, 2026-03-10 00:39:58, 5b20a88
+bin/commit.sh
