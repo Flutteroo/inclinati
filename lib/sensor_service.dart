@@ -17,15 +17,39 @@ class SensorService {
   double _gravX = 0.0;
   double _gravY = 0.0;
   double _gravZ = 0.0;
+  double _userLinearAccelMag = 0.0;
   // Gravity low-pass alpha in [0..1]. Higher -> smoother/slower gravity.
-  final double _gravityAlpha = 0.92;
+  final double _gravityAlpha = 0.84;
   // Linear acceleration threshold (m/s^2) above which we consider the
   // vehicle to be undergoing significant turn/brake/accel and therefore
   // we should make pitch/roll smoothing more aggressive.
   final double _linearAccelThreshold = 1.96; // ~0.2 g
+  // Non-linear tilt response tuning:
+  // - tiny errors are treated as noise ("viscous" feel),
+  // - persistent larger errors speed up response quickly.
+  final double _tiltDeadbandDeg = 0.15;
+  final double _tiltBoostRangeDeg = 4.0;
+  final double _tiltResponseGamma = 1.35;
+  final double _tiltParabolicRangeDeg = 50.0;
+  final double _tiltAlphaScale = 2.0;
   // buffer for recent heading values (degrees) to compute a circular mean
   final List<double> _headingBuffer = [];
   final int _headingBufferSize = 10;
+  static const double _vectorEpsilon = 1e-6;
+  bool _hasGravitySample = false;
+  bool _gravityInitialized = false;
+  bool _hasTiltBaseline = false;
+  bool _emaInitialized = false;
+  double? _latestAbsoluteHeading;
+  DateTime? _latestAbsoluteHeadingAt;
+  _Vec3 _currentDown = const _Vec3(0, 0, 1);
+  _Vec3 _baselineForward = const _Vec3(1, 0, 0);
+  _Vec3 _baselineRight = const _Vec3(0, 1, 0);
+  _Vec3 _baselineDown = const _Vec3(0, 0, 1);
+  double _pitchIntent = 0.0;
+  double _rollIntent = 0.0;
+  double _lastPitchError = 0.0;
+  double _lastRollError = 0.0;
 
   SensorService(this._data) {
     _initialize();
@@ -52,59 +76,93 @@ class SensorService {
   void _initializeSensors() {
     accelerometerEventStream().listen((AccelerometerEvent event) {
       _data.updateData(() {
-        // Update a low-pass filtered gravity estimate. This separates
-        // gravity from linear acceleration (vehicle turns, braking, etc.).
-        _gravX = _gravityAlpha * _gravX + (1 - _gravityAlpha) * event.x;
-        _gravY = _gravityAlpha * _gravY + (1 - _gravityAlpha) * event.y;
-        _gravZ = _gravityAlpha * _gravZ + (1 - _gravityAlpha) * event.z;
-
-        // Compute linear acceleration (raw - gravity). Use this to detect
-        // when the vehicle is turning or accelerating/braking so we can
-        // temporarily make smoothing more aggressive.
-        double linX = event.x - _gravX;
-        double linY = event.y - _gravY;
-        double linZ = event.z - _gravZ;
-        double linMag = sqrt(linX * linX + linY * linY + linZ * linZ);
-
-        // Compute pitch/roll from the gravity vector. Respect the
-        // device mount orientation flag so axis mapping matches the
-        // physical mounting (landscape vs portrait).
-        if (_data.deviceIsLandscape) {
-          _data.rawPitch = atan2(-_gravX, _gravZ) * 180 / pi;
-          _data.rawRoll =
-              atan2(_gravY, sqrt(_gravX * _gravX + _gravZ * _gravZ)) * 180 / pi;
+        // Update a low-pass filtered gravity estimate. Bootstrap from the
+        // first sample to avoid slow startup/transient settling.
+        if (!_gravityInitialized) {
+          _gravX = event.x;
+          _gravY = event.y;
+          _gravZ = event.z;
+          _gravityInitialized = true;
         } else {
-          // Portrait mapping (fallback)
-          _data.rawPitch = atan2(-_gravY, _gravZ) * 180 / pi;
-          _data.rawRoll =
-              atan2(_gravX, sqrt(_gravY * _gravY + _gravZ * _gravZ)) * 180 / pi;
+          _gravX = _gravityAlpha * _gravX + (1 - _gravityAlpha) * event.x;
+          _gravY = _gravityAlpha * _gravY + (1 - _gravityAlpha) * event.y;
+          _gravZ = _gravityAlpha * _gravZ + (1 - _gravityAlpha) * event.z;
         }
 
-        // Apply offset to get relative pitch/roll
-        double pitchUnfiltered = _data.rawPitch - _data.offsetPitch;
-        double rollUnfiltered = _data.rawRoll - _data.offsetRoll;
+        // Use userAccelerometer magnitude (gravity-removed by platform) as
+        // the primary linear-acceleration signal for damping. This avoids
+        // treating orientation changes themselves as "bumps".
+        double linMag = _userLinearAccelMag;
+        if (linMag <= 0.0) {
+          // Fallback before user-accelerometer stream has warmed up.
+          final linX = event.x - _gravX;
+          final linY = event.y - _gravY;
+          final linZ = event.z - _gravZ;
+          linMag = sqrt(linX * linX + linY * linY + linZ * linZ);
+        }
+
+        final normalizedDown = _normalizeOrNull(_Vec3(_gravX, _gravY, _gravZ));
+        if (normalizedDown != null) {
+          _hasGravitySample = true;
+          _currentDown = normalizedDown;
+          if (!_hasTiltBaseline) {
+            _setTiltBaselineFromDown(_currentDown);
+          }
+          _computeRawTiltFromDown(_currentDown);
+        }
+
+        // The raw tilt angles are already baseline-relative; no per-axis
+        // offset subtraction is required and avoids cross-axis coupling.
+        double pitchUnfiltered = _data.rawPitch;
+        double rollUnfiltered = _data.rawRoll;
 
         // Initialize EMA state on first reading to avoid startup bias
-        if (_data.emaPitch == 0.0 && _data.emaRoll == 0.0) {
+        if (!_emaInitialized) {
           _data.emaPitch = pitchUnfiltered;
           _data.emaRoll = rollUnfiltered;
+          _pitchIntent = 0.0;
+          _rollIntent = 0.0;
+          _lastPitchError = 0.0;
+          _lastRollError = 0.0;
+          _emaInitialized = true;
         }
 
-        // Exponential Moving Average: new = alpha * sample + (1-alpha) * old
-        // If linear acceleration is high (turn/brake), reduce responsiveness
-        // by lowering alpha (make EMA smoother). This prevents transient
-        // lateral acceleration from being interpreted as tilt.
-        double aPitch = _data.emaPitchAlpha.clamp(0.0, 1.0);
-        double aRoll = _data.emaRollAlpha.clamp(0.0, 1.0);
-        if (linMag > _linearAccelThreshold) {
-          // Make smoothing more aggressive during significant linear accel.
-          aPitch = (aPitch * 0.25).clamp(0.02, aPitch);
-          aRoll = (aRoll * 0.25).clamp(0.02, aRoll);
-        }
+        // Non-linear adaptive smoothing:
+        // - bumps/noise => high friction (small alpha)
+        // - sustained slope changes => lower friction (larger alpha)
+        final pitchError = pitchUnfiltered - _data.emaPitch;
+        final rollError = rollUnfiltered - _data.emaRoll;
+        _pitchIntent = _updateTiltIntent(
+          currentIntent: _pitchIntent,
+          error: pitchError,
+          previousError: _lastPitchError,
+          linearAccelMagnitude: linMag,
+        );
+        _rollIntent = _updateTiltIntent(
+          currentIntent: _rollIntent,
+          error: rollError,
+          previousError: _lastRollError,
+          linearAccelMagnitude: linMag,
+        );
+
+        final aPitch = _computeAdaptiveTiltAlpha(
+          baseAlpha: _data.emaPitchAlpha.clamp(0.0, 1.0),
+          error: pitchError,
+          intent: _pitchIntent,
+          linearAccelMagnitude: linMag,
+        );
+        final aRoll = _computeAdaptiveTiltAlpha(
+          baseAlpha: _data.emaRollAlpha.clamp(0.0, 1.0),
+          error: rollError,
+          intent: _rollIntent,
+          linearAccelMagnitude: linMag,
+        );
 
         _data.emaPitch =
             aPitch * pitchUnfiltered + (1 - aPitch) * _data.emaPitch;
         _data.emaRoll = aRoll * rollUnfiltered + (1 - aRoll) * _data.emaRoll;
+        _lastPitchError = pitchError;
+        _lastRollError = rollError;
 
         _data.pitch = _data.emaPitch;
         _data.roll = _data.emaRoll;
@@ -113,9 +171,11 @@ class SensorService {
 
     userAccelerometerEventStream().listen((UserAccelerometerEvent event) {
       _data.updateData(() {
-        _data.gForce =
-            sqrt(event.x * event.x + event.y * event.y + event.z * event.z) /
-            9.81;
+        final linearMag = sqrt(
+          event.x * event.x + event.y * event.y + event.z * event.z,
+        );
+        _userLinearAccelMag = linearMag;
+        _data.gForce = linearMag / 9.81;
       });
     });
 
@@ -137,16 +197,22 @@ class SensorService {
         double calY = _data.magY - _data.magOffsetY;
         double calZ = _data.magZ - _data.magOffsetZ;
 
-        // Compute tilt-compensated heading using current pitch/roll
-        double computedHeading = _calculateTiltCompensatedHeadingWithData(
+        // Compute tilt-compensated heading using gravity + baseline frame.
+        final computedHeading = _calculateTiltCompensatedHeadingWithData(
           calX,
           calY,
           calZ,
         );
+        if (computedHeading == null) {
+          return;
+        }
+        _latestAbsoluteHeading = computedHeading;
+        _latestAbsoluteHeadingAt = DateTime.now();
 
         // Apply heading offset (set when user performs a North calibration)
-        double adjusted = (computedHeading - _data.headingOffset) % 360.0;
-        if (adjusted < 0) adjusted += 360.0;
+        final adjusted = _normalizeDegrees(
+          computedHeading - _data.headingOffset,
+        );
 
         // Add to circular buffer
         if (_headingBuffer.length >= _headingBufferSize) {
@@ -165,13 +231,11 @@ class SensorService {
         if (_headingBuffer.isEmpty) {
           _data.heading = adjusted;
         } else {
-          double avgRad = atan2(
+          final avgRad = atan2(
             sumY / _headingBuffer.length,
             sumX / _headingBuffer.length,
           );
-          double avgDeg = (avgRad * 180.0 / pi) % 360.0;
-          if (avgDeg < 0) avgDeg += 360.0;
-          _data.heading = avgDeg;
+          _data.heading = _normalizeDegrees(avgRad * 180.0 / pi);
         }
       });
     });
@@ -327,89 +391,290 @@ class SensorService {
     return earthRadius * c;
   }
 
-  double _calculateTiltCompensatedHeadingWithData(
+  _Vec3 get _mountForwardAxis =>
+      _data.deviceIsLandscape ? const _Vec3(1, 0, 0) : const _Vec3(0, 1, 0);
+
+  _Vec3 get _mountRightAxis =>
+      _data.deviceIsLandscape ? const _Vec3(0, 1, 0) : const _Vec3(1, 0, 0);
+
+  _Vec3? _normalizeOrNull(_Vec3 vector) {
+    final length = vector.length;
+    if (length < _vectorEpsilon) {
+      return null;
+    }
+    return vector / length;
+  }
+
+  _Vec3 _projectOnPlane(_Vec3 vector, _Vec3 planeNormal) {
+    return vector - planeNormal * vector.dot(planeNormal);
+  }
+
+  double _normalizeDegrees(double degrees) {
+    final wrapped = degrees % 360.0;
+    return wrapped < 0 ? wrapped + 360.0 : wrapped;
+  }
+
+  double _updateTiltIntent({
+    required double currentIntent,
+    required double error,
+    required double previousError,
+    required double linearAccelMagnitude,
+  }) {
+    final absError = error.abs();
+    final sameDirection = error * previousError > 0.0;
+    final errorNorm = ((absError - _tiltDeadbandDeg) / _tiltBoostRangeDeg)
+        .clamp(0.0, 1.0);
+
+    // Intent rises when error is persistent in one direction (e.g. climbing
+    // or descending a hill), but still reacts to large one-shot changes.
+    double targetIntent = sameDirection ? errorNorm : errorNorm * 0.5;
+
+    if (linearAccelMagnitude > _linearAccelThreshold) {
+      // Extra damping during high linear acceleration to reject shocks.
+      targetIntent *= 0.35;
+    }
+
+    const rise = 0.35;
+    const fall = 0.3;
+    final blend = targetIntent > currentIntent ? rise : fall;
+    return currentIntent + (targetIntent - currentIntent) * blend;
+  }
+
+  double _computeAdaptiveTiltAlpha({
+    required double baseAlpha,
+    required double error,
+    required double intent,
+    required double linearAccelMagnitude,
+  }) {
+    final absError = error.abs();
+    final errorNorm = ((absError - _tiltDeadbandDeg) / _tiltBoostRangeDeg)
+        .clamp(0.0, 1.0);
+    final nonlinear = pow(errorNorm, _tiltResponseGamma).toDouble();
+    final parabolicNorm =
+        ((absError - _tiltDeadbandDeg) / _tiltParabolicRangeDeg).clamp(
+          0.0,
+          1.0,
+        );
+    final parabolicCurve = (2 * parabolicNorm - parabolicNorm * parabolicNorm)
+        .clamp(0.0, 1.0);
+
+    final minAlpha = (baseAlpha * 0.35).clamp(0.03, 0.42);
+    final maxAlpha = (baseAlpha + 0.5).clamp(baseAlpha, 0.92);
+    final blend =
+        (0.18 * errorNorm + 0.32 * nonlinear * intent + 0.5 * parabolicCurve)
+            .clamp(0.0, 1.0);
+    double alpha = minAlpha + (maxAlpha - minAlpha) * blend;
+
+    if (linearAccelMagnitude > _linearAccelThreshold) {
+      final over =
+          ((linearAccelMagnitude - _linearAccelThreshold) /
+                  _linearAccelThreshold)
+              .clamp(0.0, 2.0);
+      final baseDamp = (0.58 - 0.2 * over).clamp(0.22, 0.58);
+      // Keep bump rejection for small errors, but avoid over-damping when
+      // the user intentionally moves to a large angle.
+      final dampFactor = baseDamp + (1.0 - baseDamp) * parabolicCurve;
+      alpha *= dampFactor;
+    }
+
+    return (alpha * _tiltAlphaScale).clamp(0.01, 0.98);
+  }
+
+  void _setTiltBaselineFromDown(_Vec3 down, {bool force = false}) {
+    if (_hasTiltBaseline && !force) {
+      return;
+    }
+
+    final downNorm = _normalizeOrNull(down);
+    if (downNorm == null) {
+      return;
+    }
+
+    final forwardCandidate = _mountForwardAxis;
+    final rightCandidate = _mountRightAxis;
+
+    var forward = _normalizeOrNull(_projectOnPlane(forwardCandidate, downNorm));
+    if (forward == null) {
+      // Fallback if the preferred mount axis is too aligned with gravity.
+      final fallbackCandidate = _data.deviceIsLandscape
+          ? const _Vec3(0, 1, 0)
+          : const _Vec3(1, 0, 0);
+      forward = _normalizeOrNull(_projectOnPlane(fallbackCandidate, downNorm));
+      if (forward == null) {
+        return;
+      }
+    }
+
+    final rightA = _normalizeOrNull(downNorm.cross(forward));
+    final rightB = _normalizeOrNull(forward.cross(downNorm));
+    if (rightA == null || rightB == null) {
+      return;
+    }
+
+    final right = rightA.dot(rightCandidate) >= rightB.dot(rightCandidate)
+        ? rightA
+        : rightB;
+
+    _baselineForward = forward;
+    _baselineRight = right;
+    _baselineDown = downNorm;
+    _hasTiltBaseline = true;
+    _latestAbsoluteHeading = null;
+    _latestAbsoluteHeadingAt = null;
+    _headingBuffer.clear();
+  }
+
+  void _computeRawTiltFromDown(_Vec3 downNorm) {
+    if (!_hasTiltBaseline) {
+      return;
+    }
+
+    final dForward = downNorm.dot(_baselineForward);
+    final dRight = downNorm.dot(_baselineRight);
+    final dDown = downNorm.dot(_baselineDown);
+    final dDownPlane = sqrt(dForward * dForward + dDown * dDown);
+
+    _data.rawPitch = atan2(-dForward, dDown) * 180 / pi;
+    _data.rawRoll = atan2(dRight, dDownPlane) * 180 / pi;
+  }
+
+  double? _calculateTiltCompensatedHeadingWithData(
     double calX,
     double calY,
     double calZ,
   ) {
-    double pitchRad = _data.rawPitch * pi / 180.0;
-    double rollRad = _data.rawRoll * pi / 180.0;
+    if (!_hasTiltBaseline) {
+      return null;
+    }
 
-    double magXComp = calX * cos(pitchRad) + calZ * sin(pitchRad);
-    double magYComp =
-        calX * sin(rollRad) * sin(pitchRad) +
-        calY * cos(rollRad) -
-        calZ * sin(rollRad) * cos(pitchRad);
+    final mag = _Vec3(calX, calY, calZ);
+    final magHorizontal = mag - _currentDown * mag.dot(_currentDown);
+    final horizontalNorm = _normalizeOrNull(magHorizontal);
+    if (horizontalNorm == null) {
+      return null;
+    }
 
-    double headingRad = atan2(magYComp, magXComp);
-    double headingDeg = headingRad * 180.0 / pi;
-
-    return (headingDeg + 360.0) % 360.0;
+    final forwardComponent = horizontalNorm.dot(_baselineForward);
+    final rightComponent = horizontalNorm.dot(_baselineRight);
+    final headingDeg = atan2(rightComponent, forwardComponent) * 180.0 / pi;
+    return _normalizeDegrees(headingDeg);
   }
 
   void calibrate() {
-    // Immediate zeroing: commit offsets and bypass EMA so UI resets instantly.
-    _data.updateData(() {
-      _data.offsetPitch = _data.rawPitch;
-      _data.offsetRoll = _data.rawRoll;
-      // Bypass smoothing by setting EMA state to the unfiltered zero value.
+    if (!_hasGravitySample) {
+      _data.addLogEntry('Inclinometer zero failed: gravity data unavailable');
+      return;
+    }
+
+    _setTiltBaselineFromDown(_currentDown, force: true);
+    _emaInitialized = true;
+    _pitchIntent = 0.0;
+    _rollIntent = 0.0;
+    _lastPitchError = 0.0;
+    _lastRollError = 0.0;
+
+    _data.updateWithLog(() {
+      _data.offsetPitch = 0.0;
+      _data.offsetRoll = 0.0;
+      _data.rawPitch = 0.0;
+      _data.rawRoll = 0.0;
       _data.emaPitch = 0.0;
       _data.emaRoll = 0.0;
       _data.isZeroing = false;
-      // Also update the exposed pitch/roll immediately for UI consistency.
       _data.pitch = 0.0;
       _data.roll = 0.0;
-    });
+    }, 'Inclinometer zeroed (baseline frame reset)');
   }
 
   void startQuickCalibration() {
-    _data.updateData(() {
+    _data.updateWithLog(() {
       _data.isCalibrating = true;
       _data.calibrationReadingsX.clear();
       _data.calibrationReadingsY.clear();
       _data.calibrationReadingsZ.clear();
-    });
+    }, 'Compass calibration started');
   }
 
   void finishQuickCalibration() {
     if (_data.calibrationReadingsX.length < 10) {
+      _data.addLogEntry(
+        'Compass calibration aborted: collected ${_data.calibrationReadingsX.length} samples',
+      );
       return;
     }
 
-    double avgX =
-        _data.calibrationReadingsX.reduce((a, b) => a + b) /
-        _data.calibrationReadingsX.length;
-    double avgY =
-        _data.calibrationReadingsY.reduce((a, b) => a + b) /
-        _data.calibrationReadingsY.length;
-    double avgZ =
-        _data.calibrationReadingsZ.reduce((a, b) => a + b) /
-        _data.calibrationReadingsZ.length;
+    final minX = _data.calibrationReadingsX.reduce(min);
+    final maxX = _data.calibrationReadingsX.reduce(max);
+    final minY = _data.calibrationReadingsY.reduce(min);
+    final maxY = _data.calibrationReadingsY.reduce(max);
+    final minZ = _data.calibrationReadingsZ.reduce(min);
+    final maxZ = _data.calibrationReadingsZ.reduce(max);
 
-    _data.updateData(() {
+    final offsetX = (maxX + minX) / 2.0;
+    final offsetY = (maxY + minY) / 2.0;
+    final offsetZ = (maxZ + minZ) / 2.0;
+
+    final samples = _data.calibrationReadingsX.length;
+    _data.updateWithLog(() {
       _data.isCalibrating = false;
-      _data.magOffsetX = avgX;
-      _data.magOffsetY = avgY;
-      _data.magOffsetZ = avgZ;
-    });
+      _data.magOffsetX = offsetX;
+      _data.magOffsetY = offsetY;
+      _data.magOffsetZ = offsetZ;
+      _latestAbsoluteHeading = null;
+      _latestAbsoluteHeadingAt = null;
+      _headingBuffer.clear();
+    }, 'Compass calibration finished ($samples samples)');
   }
 
   void performNorthCalibration() {
-    // Use current computed heading as the forward baseline (0°) for the app.
-    // This makes subsequent heading values relative to the car's forward direction
-    // when the device is mounted and aligned.
-    _data.updateData(() {
-      _data.magOffsetX = _data.magX;
-      _data.magOffsetY = _data.magY;
-      _data.magOffsetZ = _data.magZ;
-      // Capture current heading as baseline. We use the already-smoothed heading
-      // so the baseline is stable.
-      _data.headingOffset = _data.heading;
-    });
+    final absoluteHeading = _latestAbsoluteHeading;
+    final headingAge = _latestAbsoluteHeadingAt == null
+        ? null
+        : DateTime.now().difference(_latestAbsoluteHeadingAt!);
+    if (absoluteHeading == null ||
+        headingAge == null ||
+        headingAge > const Duration(seconds: 2)) {
+      _data.addLogEntry('North calibration aborted: heading not available yet');
+      return;
+    }
+
+    _data.updateWithLog(() {
+      // Keep hard-iron offsets untouched. North calibration only sets
+      // the display baseline (forward direction = 0°).
+      _data.headingOffset = absoluteHeading;
+      _data.heading = 0.0;
+      _headingBuffer.clear();
+    }, 'Heading baseline captured (${absoluteHeading.toStringAsFixed(0)}°)');
   }
 
   void resetOdometer() {
     _data.resetOdometer();
     _saveOdometerData();
   }
+}
+
+class _Vec3 {
+  final double x;
+  final double y;
+  final double z;
+
+  const _Vec3(this.x, this.y, this.z);
+
+  double get length => sqrt(x * x + y * y + z * z);
+
+  double dot(_Vec3 other) => x * other.x + y * other.y + z * other.z;
+
+  _Vec3 cross(_Vec3 other) => _Vec3(
+    y * other.z - z * other.y,
+    z * other.x - x * other.z,
+    x * other.y - y * other.x,
+  );
+
+  _Vec3 operator +(_Vec3 other) => _Vec3(x + other.x, y + other.y, z + other.z);
+
+  _Vec3 operator -(_Vec3 other) => _Vec3(x - other.x, y - other.y, z - other.z);
+
+  _Vec3 operator *(double scalar) => _Vec3(x * scalar, y * scalar, z * scalar);
+
+  _Vec3 operator /(double scalar) => _Vec3(x / scalar, y / scalar, z / scalar);
 }

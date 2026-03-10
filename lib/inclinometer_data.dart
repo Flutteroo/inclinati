@@ -1,8 +1,16 @@
 import 'package:flutter/foundation.dart';
 
+class ActivityLogEntry {
+  final DateTime timestamp;
+  final String message;
+
+  const ActivityLogEntry(this.timestamp, this.message);
+}
+
 /// A data model class that holds all the state for the inclinometer.
 /// This will allow us to separate the data logic from the UI.
 class InclinometerData extends ChangeNotifier {
+  static const int _maxLogEntries = 200;
   double pitch = 0.0;
   double roll = 0.0;
   double rawPitch = 0.0;
@@ -18,10 +26,15 @@ class InclinometerData extends ChangeNotifier {
   // This is toggled by the LOG button in the main screen and is intended
   // for short-lived diagnostics while tuning the sensor behavior.
   bool debugMode = false;
+  final List<ActivityLogEntry> _activityLog = [];
+
+  List<ActivityLogEntry> get activityLog => List.unmodifiable(_activityLog);
 
   void toggleDebugMode() {
-    debugMode = !debugMode;
-    notifyListeners();
+    updateData(() {
+      debugMode = !debugMode;
+      _pushLog('Debug overlay ${debugMode ? 'enabled' : 'disabled'}');
+    });
   }
 
   int precision = 0;
@@ -70,15 +83,44 @@ class InclinometerData extends ChangeNotifier {
   }
 
   void toggleUnits() {
-    isMetric = !isMetric;
-    notifyListeners();
+    updateData(() {
+      isMetric = !isMetric;
+      _pushLog('Units set to ${isMetric ? 'metric (km/h)' : 'imperial (mph)'}');
+    });
   }
 
   void resetOdometer() {
-    odometerKm = 0.0;
-    lastLatitude = null;
-    lastLongitude = null;
-    lastPositionTime = null;
+    updateData(() {
+      odometerKm = 0.0;
+      lastLatitude = null;
+      lastLongitude = null;
+      lastPositionTime = null;
+      _pushLog('Odometer reset');
+    });
+  }
+
+  void addLogEntry(String message) {
+    _pushLog(message);
     notifyListeners();
+  }
+
+  void clearActivityLog() {
+    updateData(() {
+      _activityLog.clear();
+    });
+  }
+
+  void updateWithLog(VoidCallback updater, String logMessage) {
+    updateData(() {
+      updater();
+      _pushLog(logMessage);
+    });
+  }
+
+  void _pushLog(String message) {
+    _activityLog.add(ActivityLogEntry(DateTime.now(), message));
+    if (_activityLog.length > _maxLogEntries) {
+      _activityLog.removeAt(0);
+    }
   }
 }

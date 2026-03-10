@@ -80,3 +80,20 @@
 Notes:
 - This release focuses on developer ergonomics and observability: having the changelog in-app makes field diagnostics and quick release checks easier, and the long-press discovery aligns with the existing LOG/debug affordance.
 
+
+## 1.0.8, sensor recalibration, 2026-03-10 00:38:41, 71ea32a
+Gemfile
+STORES.md
+bin/commit.sh
+bin/install.sh
+docs/obd-experiments.md
+ios/Podfile.lock
+ios/Runner.xcodeproj/project.pbxproj
+ios/Runner/Info.plist
+lib/activity_dump_screen.dart
+lib/digital_inclinometer_screen.dart
+lib/inclinometer_data.dart
+lib/obd/probe_screen.dart
+lib/sensor_service.dart
+pubspec.lock
+pubspec.yaml

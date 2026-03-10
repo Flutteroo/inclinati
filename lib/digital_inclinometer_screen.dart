@@ -7,6 +7,7 @@ import 'constants.dart';
 import 'inclinometer_data.dart';
 import 'sensor_service.dart';
 import 'changelog_screen.dart';
+import 'obd/probe_screen.dart';
 
 class DigitalInclinometerScreen extends StatefulWidget {
   final InclinometerData data;
@@ -207,6 +208,28 @@ class _DigitalInclinometerScreenState extends State<DigitalInclinometerScreen> {
                         ),
                       ),
                       child: const Text('LOG'),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const ProbeScreen(),
+                          ),
+                        );
+                      },
+                      style: _buttonStyle().copyWith(
+                        padding: WidgetStateProperty.resolveWith(
+                          (_) => const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                        ),
+                        textStyle: WidgetStateProperty.resolveWith(
+                          (_) => buttonTextStyle.copyWith(fontSize: 12),
+                        ),
+                      ),
+                      child: const Text('OBD'),
                     ),
                   ],
                 ),

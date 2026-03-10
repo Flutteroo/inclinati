@@ -55,3 +55,5 @@ EOF
 
 git add CHANGELOG.md
 git commit -am "${MSG} (${VERSION})"
+
+echo "Read CHANGELOG.md and annotate the changes of the last commit in a technical way, using markdown, but only highlighting the geeky and engineeringly interesting stuff! Only reference the files that are listed in the latest block! Update the changelog with your contribution! <3"
